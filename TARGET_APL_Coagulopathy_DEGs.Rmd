@@ -1,0 +1,170 @@
+---
+title: ""
+author: "Jenny Smith"
+date: ""
+output: html_document
+---
+
+```{r setup}
+library(knitr)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=50),tidy=TRUE, 
+                      fig.align='center', fig.width = 5, fig.height = 5)
+knitr::opts_knit$set(root.dir = '/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/RNA/mRNAseq/analysis/2019.08.14_APL_DEGs/')
+options(stringsAsFactors = FALSE)
+```
+
+```{r message = FALSE, warning=FALSE}
+library(stringr)
+library(magrittr)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(DeGSEA)
+getwd()
+```
+
+```{r}
+source("~/scripts/conversion_scripts/Merge_Cat_FixDupIDs_Function.r")
+```
+
+
+#Concatenate the Count Data 
+
+```{r}
+path <- "/fh/fast/meshinchi_s/SR/ngs/illumina/rries/190807_D00300_0797_AH3MWJBCX3/analysis/alignment"
+
+files <- dir(path = path, pattern = "Count.tsv$", full.names = T)
+length(files)
+```
+
+```{r}
+cated <- catExpnData(filenames = files, regex="^.+(_[0-9]{5,6})_.+", cols=c(1,7), header = TRUE, removeFirstLine = FALSE)
+names(cated) <- c("gene_id","counts")
+summary(cated)
+```
+
+```{r}
+lapply(cated, head)
+lapply(cated, dim)
+```
+
+```{r}
+apply(cated$gene_id, 2, function(x) identical(x, cated$gene_id[,1]))
+```
+
+```{r}
+counts <- cated$counts %>% 
+  set_rownames(cated$gene_id[,1])
+
+head(counts)
+# write.csv(counts, "TARGET_APL_featureCounts.csv")
+```
+
+
+#Raw Counts
+
+```{r}
+counts <- read.csv("TARGET_APL_featureCounts.csv", row.names = 1)
+
+dim(counts)
+```
+
+
+#ClinData
+
+```{r}
+samples <- read.csv("APL_RNA_seq_samples_submitted_v2.csv") %>% 
+  filter(Pool.Name!="") %>%
+  mutate(Group=ifelse(grepl("w/o", Classification),"None","Coag")) %>% 
+  mutate(Reg.=gsub("[0-9]{1,2}(_.+)", "\\1", Reg.)) %>% 
+  set_rownames(.$Reg.)
+
+head(samples)
+dim(samples)
+table(samples$Group)
+```
+
+
+#Perform Differential Expression
+
+```{r}
+DEGs <- twoGroups_DEGs(expnData = counts, clinData = samples, 
+                       col="Group",ref = "None", 
+                       percent.cutoff = 0.05,
+                       Custom.Cols = c("RIN","Group"))
+```
+
+```{r}
+dim(DEGs$DE$Voom$E) #14,000 expressed genes
+```
+
+```{r}
+DEGs$phenovector
+```
+
+
+```{r}
+extract_DEGs(DEGs,anno = TRUE, geneLevel = TRUE)
+```
+
+
+#QC Plots 
+
+```{r fig.width=7}
+DEGs$PCA$pca_plot
+```
+
+```{r}
+ggplot(DEGs$PCA$pca_data, aes(x=PC1, y=PC3, color=group)) +
+  geom_point( size= 3) +
+  theme_bw()
+```
+
+
+```{r}
+head(DEGs$PCA$pca_data)
+```
+
+
+##plot AREG DEGs
+
+
+```{r}
+cde.expn <- DEGs$DE$Voom$E %>% 
+  as.data.frame() %>%
+  rownames_to_column("gene") %>% 
+  filter(gene == "AREG") %>% 
+  gather(Reg., log2_CPM, -gene) %>% 
+  left_join(., samples, by="Reg.")
+
+
+head(cde.expn)
+```
+
+```{r fig.width=7}
+ggplot(data=cde.expn, aes(x=reorder(Reg.,log2_CPM), y=log2_CPM, fill=Group)) + 
+  geom_bar(stat="identity") + 
+  theme_classic() +
+  scale_fill_brewer(palette = "Paired") +
+  scale_x_discrete(labels=paste0("Pt.",1:12)) +
+  labs(title="AREG Expression in APL", x="Sample")
+```
+
+```{r fig.height=4}
+ggplot(data=cde.expn, aes(x=Group, y=log2_CPM, fill=Group)) + 
+  geom_boxplot() +
+  theme_classic() +
+  scale_fill_brewer(palette = "Paired") +
+  # scale_x_discrete(labels=paste0("Pt.",1:12)) +
+  labs(title="AREG Expression in APL", x="Sample")
+```
+
+
+
+#Session Information
+
+```{r}
+sessionInfo()
+```
+
